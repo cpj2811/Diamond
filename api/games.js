@@ -321,10 +321,14 @@ function parseESPNEvent(event) {
     || (sbId ? `https://stats.statbroadcast.com/broadcast/?id=${sbId}` : null);
   const liveStatsSourceVal = scraped?.platform || (getSidearmLiveUrl(homeName) ? 'sidearm' : (sbId ? 'statbroadcast' : null));
 
+  // Extract statbroadcast ID from scraped URL if not found directly
+  const scrapedSbId = scraped?.liveStatsUrl ? (scraped.liveStatsUrl.match(/id=(\d+)/)||[])[1] || null : null;
+  const finalSbId = sbId || scrapedSbId;
+
   return {
     id: `espn_${event.id}`,
     espnGameId: event.id,
-    statbroadcastId: sbId,
+    statbroadcastId: finalSbId,
     statbroadcastUrl: liveStatsUrl,
     liveStatsSource: liveStatsSourceVal,
     away: {
@@ -365,14 +369,19 @@ module.exports = async (req, res) => {
   try {
     const date = req.query.date || new Date().toISOString().slice(0,10).replace(/-/g,'');
     const events = await fetchESPNGames(date);
-    const games = events.map(parseESPNEvent).filter(Boolean);
-
-    // Kick off background scrape for today's home teams that aren't cached yet
-    const homeTeams = [...new Set(games.map(g => g.home?.name).filter(Boolean))];
-    const uncached = homeTeams.filter(name => !getCached(name) && SCHEDULE_PAGES[name]);
+    // Scrape FIRST so URLs are in cache before we parse games
+    const homeTeamNames = [...new Set(
+      events.map(e => {
+        const home = e.competitions?.[0]?.competitors?.find(c => c.homeAway === 'home');
+        return home?.team?.displayName || '';
+      }).filter(Boolean)
+    )];
+    const uncached = homeTeamNames.filter(name => !getCached(name) && SCHEDULE_PAGES[name]);
     if (uncached.length > 0) {
-      scrapeAll(uncached).catch(e => console.error('Background scrape error:', e));
+      try { await scrapeAll(uncached); } catch(e) { console.error('Scrape error:', e); }
     }
+
+    const games = events.map(parseESPNEvent).filter(Boolean);
 
     const order = { live: 0, upcoming: 1, final: 2 };
     games.sort((a, b) => {
