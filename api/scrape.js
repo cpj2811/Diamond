@@ -5,8 +5,14 @@
 
 const fetch = require('node-fetch');
 const cheerio = require('cheerio');
+const { Redis } = require('@upstash/redis');
 
-// In-memory cache: { "Team Name": { liveStatsUrl, platform, cachedAt } }
+const redis = process.env.KV_REST_API_URL ? new Redis({
+  url: process.env.KV_REST_API_URL,
+  token: process.env.KV_REST_API_TOKEN,
+}) : null;
+
+// In-memory fallback cache
 const cache = global._diamondLiveStatsCache = global._diamondLiveStatsCache || {};
 
 // School schedule page URLs - Sidearm schools all follow the same pattern
@@ -243,7 +249,15 @@ async function scrapeAll(homeTeams) {
         }
         const result = await scrapeSchoolSchedule(name, SCHEDULE_PAGES[name]);
         if (result) {
-          cache[name] = { ...result, date: today };
+          const toStore = { ...result, date: today };
+          cache[name] = toStore;
+          // Save to Redis with 24hr expiry
+          if (redis) {
+            try {
+              const key = `diamond:livestats:${today}:${name}`;
+              await redis.set(key, toStore, { ex: 86400 });
+            } catch(e) { console.error('Redis set error:', e.message); }
+          }
         }
         return { name, result };
       })
@@ -256,11 +270,22 @@ async function scrapeAll(homeTeams) {
   return results;
 }
 
-// Get cached result for a single team
-function getCached(teamName) {
+// Get cached result for a single team (Redis first, memory fallback)
+async function getCached(teamName) {
   const today = new Date().toDateString();
-  const cached = cache[teamName];
-  if (cached && cached.date === today) return cached;
+  // Check memory first (fastest)
+  if (cache[teamName] && cache[teamName].date === today) return cache[teamName];
+  // Check Redis
+  if (redis) {
+    try {
+      const key = `diamond:livestats:${today}:${teamName}`;
+      const val = await redis.get(key);
+      if (val) {
+        cache[teamName] = val; // warm memory cache
+        return val;
+      }
+    } catch(e) { console.error('Redis get error:', e.message); }
+  }
   return null;
 }
 
