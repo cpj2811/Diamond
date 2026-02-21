@@ -1,5 +1,11 @@
 {
   "version": 2,
+  "crons": [
+    {
+      "path": "/api/scrape",
+      "schedule": "0 12 * * *"
+    }
+  ],
   "headers": [
     {
       "source": "/api/(.*)",
