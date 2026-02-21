@@ -825,11 +825,7 @@ function cardHTML(game, compact = false) {
 
   const sbUrl = game.statbroadcastUrl || null;
 
-  const linksHTML = !compact ? `
-    <div class="game-links">
-      ${sbUrl ? `<a class="link-btn" href="${sbUrl}" target="_blank" onclick="event.stopPropagation()">Live Stats ↗</a>` : ''}
-    </div>
-  ` : '';
+  const linksHTML = '';
 
   const footerHTML = !compact ? `<div class="card-footer">
     <div class="situation">${baseDiamond}</div>
@@ -974,15 +970,15 @@ async function openGameModal(gameId, espnGameId, sbId) {
   // Render header with score
   renderPanelHeader(game);
 
-  // Decide what to show in the body
-  const liveStatsUrl = game.statbroadcastUrl;
-  const liveStatsSource = game.liveStatsSource;
+  // Extract StatBroadcast ID from the scraped URL or direct ID
+  const sbUrl = game.statbroadcastUrl || '';
+  const extractedId = game.statbroadcastId || (sbUrl.match(/id=(\d+)/)||[])[1] || null;
+  const finalId = sbId || extractedId;
 
-  if (liveStatsSource === 'sidearm' && liveStatsUrl) {
-    renderPanelSidearm(game, liveStatsUrl);
-  } else if (liveStatsSource === 'statbroadcast' || sbId) {
+  if (finalId) {
+    // We have a StatBroadcast game ID — fetch and render natively inside Diamond
     renderPanelLoading();
-    const detail = await fetchGameDetail(gameId, espnGameId, sbId || game.statbroadcastId);
+    const detail = await fetchGameDetail(gameId, espnGameId, finalId);
     renderPanelNative(game, detail);
   } else {
     renderPanelESPNOnly(game);
