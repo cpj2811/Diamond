@@ -673,6 +673,19 @@ async function fetchGames(date) {
 }
 
 async function fetchGameDetail(gameId, espnGameId, sbId) {
+  if (!sbId) return null;
+  try {
+    // Fetch StatBroadcast XML directly from the browser - bypasses server blocking
+    const url = `https://stats.statbroadcast.com/broadcast/json/?id=${sbId}`;
+    const res = await fetch(url, { mode: 'cors' });
+    if (res.ok) {
+      const data = await res.json();
+      const parsed = parseStatBroadcastJSON(data, sbId);
+      if (parsed) return parsed;
+    }
+  } catch(e) { console.log('StatBroadcast direct fetch failed, trying proxy:', e.message); }
+
+  // Fallback: go through our server proxy
   try {
     const params = new URLSearchParams({ id: gameId });
     if (espnGameId) params.set('espnId', espnGameId);
@@ -681,7 +694,66 @@ async function fetchGameDetail(gameId, espnGameId, sbId) {
     if (!res.ok) return null;
     const data = await res.json();
     return data.detail;
-  } catch {
+  } catch { return null; }
+}
+
+function parseStatBroadcastJSON(data, sbId) {
+  if (!data) return null;
+  try {
+    // StatBroadcast wraps data differently per school - try multiple structures
+    const game = data.game || data.Game || data;
+    const vsTeam = game.vsteam || game.away || game.visitor || game.Visitor || {};
+    const hmTeam = game.hmteam || game.home || game.Home || {};
+
+    const parseBatters = (team) => {
+      const batters = team.batters || team.batting || team.Batters || team.hitters || [];
+      if (!Array.isArray(batters)) return [];
+      return batters.filter(b => b.name || b.Name || b.playerName).map(b => ({
+        name: b.name || b.Name || b.playerName || '',
+        ab: b.ab || b.AB || b.atbats || '0',
+        r: b.r || b.R || b.runs || '0',
+        h: b.h || b.H || b.hits || '0',
+        rbi: b.rbi || b.RBI || '0',
+        bb: b.bb || b.BB || b.walks || '0',
+        so: b.so || b.SO || b.strikeouts || '0',
+        avg: b.avg || b.AVG || b.battingAvg || '.000',
+      }));
+    };
+
+    const parsePitchers = (team) => {
+      const pitchers = team.pitchers || team.pitching || team.Pitchers || [];
+      if (!Array.isArray(pitchers)) return [];
+      return pitchers.filter(p => p.name || p.Name || p.playerName).map(p => ({
+        name: p.name || p.Name || p.playerName || '',
+        ip: p.ip || p.IP || p.inningsPitched || '0.0',
+        h: p.h || p.H || p.hits || '0',
+        r: p.r || p.R || p.runs || '0',
+        er: p.er || p.ER || p.earnedRuns || '0',
+        bb: p.bb || p.BB || p.walks || '0',
+        so: p.so || p.SO || p.strikeouts || '0',
+        era: p.era || p.ERA || '0.00',
+      }));
+    };
+
+    const plays = game.plays || game.scoringPlays || game.scoring || [];
+    const scoringPlays = (Array.isArray(plays) ? plays : []).map(p => ({
+      inning: p.inning || p.Inning || p.inn || '',
+      half: p.half || p.side || p.Half || '',
+      text: p.description || p.text || p.play || p.Text || '',
+      awayScore: p.vscore || p.awayScore || p.visitorScore || '',
+      homeScore: p.hscore || p.homeScore || p.hmScore || '',
+    })).filter(p => p.text);
+
+    const awayBatters = parseBatters(vsTeam);
+    const homeBatters = parseBatters(hmTeam);
+    const awayPitchers = parsePitchers(vsTeam);
+    const homePitchers = parsePitchers(hmTeam);
+
+    if (!awayBatters.length && !homeBatters.length && !scoringPlays.length) return null;
+
+    return { source: 'statbroadcast_browser', awayBatters, homeBatters, awayPitchers, homePitchers, scoringPlays };
+  } catch(e) {
+    console.error('StatBroadcast JSON parse error:', e.message);
     return null;
   }
 }
