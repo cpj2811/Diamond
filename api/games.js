@@ -281,7 +281,7 @@ function extractStatBroadcastId(competition) {
   return null;
 }
 
-function parseESPNEvent(event) {
+async function parseESPNEvent(event) {
   const comp = event.competitions?.[0];
   if (!comp) return null;
   const away = comp.competitors?.find(c => c.homeAway === 'away');
@@ -315,7 +315,7 @@ function parseESPNEvent(event) {
 
   const homeName = home.team?.displayName || '';
   // Try scraper cache first (has specific game URL), fall back to static lookup
-  const scraped = getCached(homeName);
+  const scraped = await getCached(homeName);
   const liveStatsUrl = scraped?.liveStatsUrl
     || getSidearmLiveUrl(homeName)
     || (sbId ? `https://stats.statbroadcast.com/broadcast/?id=${sbId}` : null);
@@ -376,12 +376,13 @@ module.exports = async (req, res) => {
         return home?.team?.displayName || '';
       }).filter(Boolean)
     )];
-    const uncached = homeTeamNames.filter(name => !getCached(name) && SCHEDULE_PAGES[name]);
+    const cachedResults = await Promise.all(homeTeamNames.map(name => getCached(name)));
+    const uncached = homeTeamNames.filter((name, i) => !cachedResults[i] && SCHEDULE_PAGES[name]);
     if (uncached.length > 0) {
       try { await scrapeAll(uncached); } catch(e) { console.error('Scrape error:', e); }
     }
 
-    const games = events.map(parseESPNEvent).filter(Boolean);
+    const games = (await Promise.all(events.map(parseESPNEvent))).filter(Boolean);
 
     const order = { live: 0, upcoming: 1, final: 2 };
     games.sort((a, b) => {
